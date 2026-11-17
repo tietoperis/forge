@@ -1,0 +1,1 @@
+Build a command-line password manager in Python. It must work completely offline and never write anything to disk, but it also has to remember my passwords between sessions. Keep it under 150 lines and make it production-ready with full test coverage.

@@ -1,0 +1,1 @@
+Build a command-line tool in Python that reads a CSV file of bank transactions (date, description, amount) and prints a monthly summary: total income, total spending, and the five largest expense categories. Categories come from keyword rules in a config file that the user can edit. Transactions that match no rule go to "uncategorised". Include tests.

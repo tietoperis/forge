@@ -1,0 +1,1 @@
+Here is a folder of 200 short audio clips (wav, various lengths) with a labels.csv mapping filenames to "calm" or "agitated". Write a Python pipeline that extracts features, trains a classifier, evaluates it properly, and reports results. I care about whether the result would hold up on new speakers, not just new clips.

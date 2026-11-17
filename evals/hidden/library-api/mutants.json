@@ -1,0 +1,84 @@
+[
+  {
+    "id": "limit-four",
+    "file": "src/app.ts",
+    "replace": [["export const MAX_ACTIVE_LOANS = 3;", "export const MAX_ACTIVE_LOANS = 4;"]],
+    "expectFail": ["REQ-5"]
+  },
+  {
+    "id": "returned-loans-count",
+    "file": "src/app.ts",
+    "replace": [["\"SELECT COUNT(*) AS n FROM loans WHERE member_id = ? AND returned_at IS NULL\"", "\"SELECT COUNT(*) AS n FROM loans WHERE member_id = ?\""]],
+    "expectFail": ["REQ-5"]
+  },
+  {
+    "id": "check-then-insert-race",
+    "note": "Async gap between the limit check and the insert, as with an async SQLite driver and no transaction",
+    "file": "src/app.ts",
+    "replace": [
+      ["  const route = (method: string", "  const route = async (method: string"],
+      ["      const r = route(req.method", "      const r = await route(req.method"],
+      ["        return tx(() => {\n          book(bookId);\n          member(memberId);", "        {\n          book(bookId);\n          member(memberId);"],
+      ["          if (n >= MAX_ACTIVE_LOANS) throw new HttpError(409, `member already has ${MAX_ACTIVE_LOANS} books on loan`);\n", "          if (n >= MAX_ACTIVE_LOANS) throw new HttpError(409, `member already has ${MAX_ACTIVE_LOANS} books on loan`);\n          await new Promise((r) => setTimeout(r, 20));\n"],
+      ["          return { status: 201, body: loanOut(loan(Number(info.lastInsertRowid))) };\n        });\n      }\n      if (parts.length === 1 && method === \"GET\") {\n        const where", "          return { status: 201, body: loanOut(loan(Number(info.lastInsertRowid))) };\n        }\n      }\n      if (parts.length === 1 && method === \"GET\") {\n        const where"],
+      ["CREATE UNIQUE INDEX IF NOT EXISTS one_active_loan_per_book ON loans(book_id) WHERE returned_at IS NULL;", ""]
+    ],
+    "expectFail": ["REQ-7"]
+  },
+  {
+    "id": "coerce-ids",
+    "note": "K1 P2: {\"bookId\": true} created a loan",
+    "file": "src/app.ts",
+    "replace": [["const idValue = (v: unknown, field: string): number => {\n", "const idValue = (v: unknown, field: string): number => {\n  v = Number(v);\n"]],
+    "expectFail": ["REQ-14"]
+  },
+  {
+    "id": "isbn-without-checksum",
+    "note": "K1 P2: '----------' accepted",
+    "file": "src/app.ts",
+    "replace": [["    return sum % 11 === 0;", "    return true;"], ["    return sum % 10 === 0;", "    return true;"], ["  return false;\n}", "  return /^[\\dX-]{10,17}$/.test(raw);\n}"]],
+    "expectFail": ["REQ-12"]
+  },
+  {
+    "id": "delete-with-active-loan",
+    "file": "src/app.ts",
+    "replace": [["          if (one(\"SELECT 1 FROM loans WHERE member_id = ? AND returned_at IS NULL\", m.id)) throw new HttpError(409, \"member has books on loan\");\n", ""]],
+    "expectFail": ["REQ-10"]
+  },
+  {
+    "id": "delete-removes-history",
+    "file": "src/app.ts",
+    "replace": [["          run(\"UPDATE books SET deleted_at = ? WHERE id = ?\", now().toISOString(), b.id);", "          run(\"DELETE FROM loans WHERE book_id = ?\", b.id);\n          run(\"UPDATE books SET deleted_at = ? WHERE id = ?\", now().toISOString(), b.id);"]],
+    "expectFail": ["REQ-11"]
+  },
+  {
+    "id": "email-case-sensitive",
+    "file": "src/app.ts",
+    "replace": [["ON members(lower(email)) WHERE", "ON members(email) WHERE"], ["\"SELECT 1 FROM members WHERE lower(email) = lower(?) AND deleted_at IS NULL\"", "\"SELECT 1 FROM members WHERE email = ? AND deleted_at IS NULL\""]],
+    "expectFail": ["REQ-13"]
+  },
+  {
+    "id": "client-chosen-return-date",
+    "file": "src/app.ts",
+    "replace": [["          run(\"UPDATE loans SET returned_at = ? WHERE id = ?\", now().toISOString(), l.id);", "          run(\"UPDATE loans SET returned_at = ? WHERE id = ?\", body?.returnedAt ?? now().toISOString(), l.id);"]],
+    "expectFail": ["REQ-8"]
+  },
+  {
+    "id": "in-memory-database",
+    "file": "src/server.ts",
+    "replace": [["openDb(process.env.DATABASE_PATH ?? \"library.db\")", "openDb(\":memory:\")"]],
+    "expectFail": ["REQ-17"]
+  },
+  {
+    "id": "error-body-without-error-field",
+    "file": "src/app.ts",
+    "replace": [["      if (e instanceof HttpError) send(e.status, { error: e.message });", "      if (e instanceof HttpError) send(e.status, { message: e.message });"]],
+    "expectFail": ["REQ-15"]
+  },
+  {
+    "id": "unknown-book-is-400",
+    "file": "src/app.ts",
+    "replace": [["    if (!r) throw new HttpError(404, `book ${id} not found`);", "    if (!r) throw new HttpError(400, `book ${id} not found`);"]],
+    "expectFail": ["REQ-9"]
+  }
+]

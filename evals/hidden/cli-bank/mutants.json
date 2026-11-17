@@ -1,0 +1,72 @@
+[
+  {
+    "id": "decimal-comma-as-thousands",
+    "note": "K1 P1: '54,20' read as 5420",
+    "file": "banksummary",
+    "replace": [["    last = max(s.rfind(\".\"), s.rfind(\",\"))", "    s = s.replace(\",\", \"\")\n    last = s.rfind(\".\")"]],
+    "expectFail": ["REQ-3"]
+  },
+  {
+    "id": "substring-keywords",
+    "note": "K1 P1: 'rent' matched 'Parent'",
+    "file": "banksummary",
+    "replace": [["r\"(?<!\\w)\" + ", ""], [" + r\"(?!\\w)\"", ""]],
+    "expectFail": ["REQ-8"]
+  },
+  {
+    "id": "abort-on-bad-row",
+    "note": "K1 P1: one bad row stopped the run",
+    "file": "banksummary",
+    "replace": [["            skipped.append({\"line\": line, \"reason\": error})\n            continue", "            raise FatalError(f\"line {line}: {error}\")"]],
+    "expectFail": ["REQ-5"]
+  },
+  {
+    "id": "us-dates-month-first",
+    "note": "K1 P1: slash dates read inconsistently",
+    "file": "banksummary",
+    "replace": [["(re.compile(r\"^(\\d{1,2})/(\\d{1,2})/(\\d{4})$\"), (\"d\", \"m\", \"y\"))", "(re.compile(r\"^(\\d{1,2})/(\\d{1,2})/(\\d{4})$\"), (\"m\", \"d\", \"y\"))"]],
+    "expectFail": ["REQ-4"]
+  },
+  {
+    "id": "last-rule-wins",
+    "file": "banksummary",
+    "replace": [["    for category, patterns in rules:", "    for category, patterns in reversed(rules):"]],
+    "expectFail": ["REQ-9"]
+  },
+  {
+    "id": "missing-default-config-is-fatal",
+    "file": "banksummary",
+    "replace": [["        if explicit:\n", "        if True:\n"]],
+    "expectFail": ["REQ-10"]
+  },
+  {
+    "id": "no-two-decimal-rounding",
+    "file": "banksummary",
+    "replace": [["    return str(d.quantize(CENT, rounding=ROUND_HALF_UP))", "    return str(d)"]],
+    "expectFail": ["REQ-16"]
+  },
+  {
+    "id": "ties-not-alphabetical",
+    "file": "banksummary",
+    "replace": [["key=lambda kv: (-kv[1], kv[0])", "key=lambda kv: -kv[1]"]],
+    "expectFail": ["REQ-15"]
+  },
+  {
+    "id": "top-six",
+    "file": "banksummary",
+    "replace": [["TOP_N = 5", "TOP_N = 6"]],
+    "expectFail": ["REQ-15"]
+  },
+  {
+    "id": "bom-not-stripped",
+    "file": "banksummary",
+    "replace": [["encoding=\"utf-8-sig\"", "encoding=\"utf-8\""]],
+    "expectFail": ["REQ-1"]
+  },
+  {
+    "id": "refund-nets-spending",
+    "file": "banksummary",
+    "replace": [["        if amount >= 0:\n            m[\"income\"] += amount", "        if amount >= 0 and \"refund\" in row[\"description\"].lower():\n            m[\"spending\"] -= amount\n        elif amount >= 0:\n            m[\"income\"] += amount"]],
+    "expectFail": ["REQ-14"]
+  }
+]

@@ -1,0 +1,1 @@
+Build a REST API for a small library: books, members and loans. A member can borrow at most three books at a time, a book can only be on loan to one member, and returning a book must record the date. Use TypeScript and SQLite, include input validation and automated tests, and write a README with how to run it.

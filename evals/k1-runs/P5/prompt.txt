@@ -1,0 +1,1 @@
+Make a tool that helps me keep track of what my team is working on. It should be simple but powerful, and integrate with what we already use.

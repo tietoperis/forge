@@ -1,0 +1,1 @@
+Build a web app for tracking my gym workouts. I log exercises with sets, reps and weight, and I want to see my progress over time per exercise as a chart. It should work on my phone and keep my data between visits.

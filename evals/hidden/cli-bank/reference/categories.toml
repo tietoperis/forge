@@ -1,0 +1,18 @@
+# Category rules for banksummary. The first matching rule wins.
+# Keywords match whole words, case-insensitively.
+
+[[rules]]
+category = "Groceries"
+keywords = ["tesco", "lidl", "aldi", "k-market", "s-market", "prisma", "whole foods"]
+
+[[rules]]
+category = "Housing"
+keywords = ["rent", "mortgage", "landlord"]
+
+[[rules]]
+category = "Transport"
+keywords = ["hsl", "vr", "uber", "taxi", "fuel"]
+
+[[rules]]
+category = "Subscriptions"
+keywords = ["netflix", "spotify", "subscription"]

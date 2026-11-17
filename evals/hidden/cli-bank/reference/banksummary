@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Reference implementation of the cli-bank spec (evals/specs/cli-bank/spec.md).
+
+Hand-checked against the spec; used only to validate the hidden test suite.
+"""
+import argparse
+import csv
+import json
+import re
+import sys
+import tomllib
+from collections import defaultdict
+from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from pathlib import Path
+
+UNCATEGORISED = "uncategorised"
+TOP_N = 5
+CENT = Decimal("0.01")
+
+
+class FatalError(Exception):
+    """The summary cannot be produced (exit 1)."""
+
+
+# ---------- parsing ----------
+
+DATE_PATTERNS = [
+    (re.compile(r"^(\d{4})-(\d{2})-(\d{2})$"), ("y", "m", "d")),
+    (re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$"), ("d", "m", "y")),
+    (re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$"), ("d", "m", "y")),
+]
+
+
+def parse_date(text: str) -> date:
+    s = text.strip()
+    for pattern, order in DATE_PATTERNS:
+        m = pattern.match(s)
+        if m:
+            parts = dict(zip(order, (int(g) for g in m.groups())))
+            try:
+                return date(parts["y"], parts["m"], parts["d"])
+            except ValueError:
+                break
+    raise ValueError(f"unrecognised date {text!r}")
+
+
+AMOUNT_CHARS = re.compile(r"^[+-]?[0-9.,\s  ]+$")
+
+
+def parse_amount(text: str) -> Decimal:
+    s = text.strip()
+    for sym in ("€", "$", "£"):
+        s = s.replace(sym, "")
+    s = s.strip()
+    sign = ""
+    if s and s[0] in "+-":
+        sign, s = s[0], s[1:].strip()
+    if not s or not AMOUNT_CHARS.match(s) or not any(c.isdigit() for c in s):
+        raise ValueError(f"unrecognised amount {text!r}")
+    last = max(s.rfind("."), s.rfind(","))
+    decimals = ""
+    integer = s
+    if last != -1:
+        tail = s[last + 1:]
+        if tail.isdigit() and 1 <= len(tail) <= 2:
+            integer, decimals = s[:last], tail
+    integer_digits = re.sub(r"[.,\s  ]", "", integer)
+    if not integer_digits.isdigit() and integer_digits != "":
+        raise ValueError(f"unrecognised amount {text!r}")
+    try:
+        value = Decimal(f"{integer_digits or '0'}.{decimals or '0'}")
+    except InvalidOperation:
+        raise ValueError(f"unrecognised amount {text!r}") from None
+    return -value if sign == "-" else value
+
+
+def load_rules(path: Path, explicit: bool, warnings: list[str]):
+    if not path.exists():
+        if explicit:
+            raise FatalError(f"config file not found: {path}")
+        warnings.append(f"no rules file {path}; all expenses are uncategorised")
+        return []
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        raise FatalError(f"cannot read config {path}: {e}") from None
+    rules = data.get("rules", [])
+    if not isinstance(rules, list):
+        raise FatalError(f"config {path}: 'rules' must be an array of tables")
+    compiled = []
+    for i, rule in enumerate(rules, 1):
+        if not isinstance(rule, dict) or not isinstance(rule.get("category"), str) \
+                or not isinstance(rule.get("keywords"), list) \
+                or not all(isinstance(k, str) for k in rule["keywords"]):
+            raise FatalError(f"config {path}: rule {i} needs a string 'category' and a list of string 'keywords'")
+        patterns = [
+            re.compile(r"(?<!\w)" + r"\s+".join(map(re.escape, k.split())) + r"(?!\w)", re.IGNORECASE)
+            for k in rule["keywords"] if k.strip()
+        ]
+        compiled.append((rule["category"], patterns))
+    return compiled
+
+
+def categorise(description: str, rules) -> str:
+    for category, patterns in rules:
+        if any(p.search(description) for p in patterns):
+            return category
+    return UNCATEGORISED
+
+
+def read_rows(path: Path):
+    """Yield (line_number, dict-or-None, error). Raises FatalError for unreadable files."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError as e:
+        raise FatalError(f"cannot read {path}: {e.strerror}") from None
+    except UnicodeDecodeError:
+        raise FatalError(f"{path} is not UTF-8 text") from None
+    lines = text.splitlines(keepends=True)
+    header_idx = next((i for i, l in enumerate(lines) if l.strip()), None)
+    if header_idx is None:
+        raise FatalError(f"{path} is empty")
+    delimiter = ";" if ";" in lines[header_idx] else ","
+    header = next(csv.reader([lines[header_idx]], delimiter=delimiter))
+    columns = {name.strip().lower(): i for i, name in enumerate(header)}
+    missing = [c for c in ("date", "description", "amount") if c not in columns]
+    if missing:
+        raise FatalError(f"{path}: missing column(s): {', '.join(missing)}")
+    for idx in range(header_idx + 1, len(lines)):
+        line = lines[idx]
+        if not line.strip():
+            continue
+        try:
+            fields = next(csv.reader([line], delimiter=delimiter))
+        except csv.Error as e:
+            yield idx + 1, None, f"malformed row: {e}"
+            continue
+        if len(fields) != len(header):
+            yield idx + 1, None, f"expected {len(header)} fields, found {len(fields)}"
+            continue
+        yield idx + 1, {c: fields[i] for c, i in columns.items()}, None
+
+
+# ---------- summary ----------
+
+def summarise(rows, rules):
+    months = defaultdict(lambda: {"income": Decimal(0), "spending": Decimal(0), "cats": defaultdict(Decimal)})
+    skipped = []
+    for line, row, error in rows:
+        if error is None:
+            try:
+                if not row["date"].strip():
+                    raise ValueError("missing date")
+                if not row["amount"].strip():
+                    raise ValueError("missing amount")
+                day = parse_date(row["date"])
+                amount = parse_amount(row["amount"])
+            except ValueError as e:
+                error = str(e)
+        if error is not None:
+            skipped.append({"line": line, "reason": error})
+            continue
+        m = months[f"{day.year:04d}-{day.month:02d}"]
+        if amount >= 0:
+            m["income"] += amount
+        else:
+            m["spending"] -= amount
+            m["cats"][categorise(row["description"], rules)] -= amount
+    return months, skipped
+
+
+def money(d: Decimal) -> str:
+    return str(d.quantize(CENT, rounding=ROUND_HALF_UP))
+
+
+def build_report(months, skipped, warnings):
+    out = []
+    for key in sorted(months):
+        m = months[key]
+        top = sorted(m["cats"].items(), key=lambda kv: (-kv[1], kv[0]))[:TOP_N]
+        out.append({
+            "month": key,
+            "income": money(m["income"]),
+            "spending": money(m["spending"]),
+            "top_categories": [{"category": c, "amount": money(a)} for c, a in top],
+        })
+    return {"months": out, "skipped_rows": skipped, "warnings": warnings}
+
+
+def render_text(report) -> str:
+    lines = []
+    for m in report["months"]:
+        lines += [m["month"], f"  Income:   {m['income']:>12}", f"  Spending: {m['spending']:>12}"]
+        if m["top_categories"]:
+            lines.append("  Top expense categories:")
+            lines += [f"    {c['category']:<24}{c['amount']:>12}" for c in m["top_categories"]]
+        lines.append("")
+    if not report["months"]:
+        lines.append("No transactions.")
+    if report["skipped_rows"]:
+        lines.append(f"Skipped {len(report['skipped_rows'])} row(s):")
+        lines += [f"  line {s['line']}: {s['reason']}" for s in report["skipped_rows"]]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(prog="banksummary", description="Monthly summary of bank transactions.")
+    p.add_argument("csv_file", type=Path)
+    p.add_argument("--config", type=Path)
+    p.add_argument("--format", choices=["text", "json"], default="text")
+    args = p.parse_args(argv)
+    warnings: list[str] = []
+    try:
+        rules = load_rules(args.config or Path("categories.toml"), args.config is not None, warnings)
+        months, skipped = summarise(read_rows(args.csv_file), rules)
+    except FatalError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    for w in warnings:
+        print(f"warning: {w}", file=sys.stderr)
+    report = build_report(months, skipped, warnings)
+    if args.format == "json":
+        json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write(render_text(report))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
